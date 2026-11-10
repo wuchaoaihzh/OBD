@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>新能源OBD检测</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0f1117;--card:#1a1d27;--card2:#22263a;--border:#2a2d3e;
+  --green:#00e676;--yellow:#ffd740;--red:#ff5252;--blue:#40c4ff;--purple:#ce93d8;
+  --text:#e8eaf6;--muted:#6c7293;--radius:12px;--gap:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;
+     min-height:100vh;padding-bottom:70px;font-size:14px;}
+
+/* ── 顶栏 ── */
+.topbar{position:sticky;top:0;z-index:100;background:var(--bg);
+        border-bottom:1px solid var(--border);padding:10px 14px;
+        display:flex;align-items:center;justify-content:space-between;}
+.topbar-title{font-size:1rem;font-weight:700;color:var(--blue);}
+.badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.68rem;font-weight:700;}
+.badge-ok{background:#00e67620;color:var(--green);}
+.badge-sim{background:#ffd74020;color:var(--yellow);}
+.badge-err{background:#ff525220;color:var(--red);}
+
+/* ── 底部Tab导航 ── */
+.tabnav{position:fixed;bottom:0;left:0;right:0;z-index:100;
+        background:var(--card);border-top:1px solid var(--border);
+        display:flex;height:60px;}
+.tabnav-item{flex:1;display:flex;flex-direction:column;align-items:center;
+             justify-content:center;gap:3px;cursor:pointer;
+             color:var(--muted);font-size:.62rem;transition:color .2s;}
+.tabnav-item.active{color:var(--blue);}
+.tabnav-item svg{width:22px;height:22px;fill:currentColor;}
+
+/* ── 页面容器 ── */
+.page{display:none;padding:12px;}
+.page.active{display:block;}
+
+/* ── 卡片 ── */
+.card{background:var(--card);border:1px solid var(--border);
+      border-radius:var(--radius);padding:14px;margin-bottom:var(--gap);}
+.card-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;
+            color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);}
+
+/* ── 仪表半圆 ── */
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;}
+.gauge-svg{width:110px;height:70px;overflow:visible;}
+.gauge-bg{fill:none;stroke:#2a2d3e;stroke-width:9;stroke-linecap:round;}
+.gauge-fg{fill:none;stroke-width:9;stroke-linecap:round;
+          transition:stroke-dashoffset .6s,stroke .4s;}
+.gauge-val{font-size:1.5rem;font-weight:700;text-anchor:middle;dominant-baseline:middle;}
+.gauge-unit{font-size:.6rem;fill:var(--muted);text-anchor:middle;}
+.gauge-label{font-size:.72rem;color:var(--muted);margin-top:3px;}
+
+/* ── 数据行 ── */
+.row{display:flex;justify-content:space-between;align-items:center;
+     padding:7px 0;border-bottom:1px solid var(--border);}
+.row:last-child{border:none;}
+.row-label{font-size:.78rem;color:var(--muted);}
+.row-val{font-size:.85rem;font-weight:600;}
+
+/* ── 按钮 ── */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:8px 16px;
+     border-radius:8px;border:none;font-size:.8rem;font-weight:600;
+     cursor:pointer;transition:opacity .2s;}
+.btn:active{opacity:.7;}
+.btn-red{background:#ff525220;color:var(--red);border:1px solid #ff525244;}
+.btn-blue{background:#40c4ff20;color:var(--blue);border:1px solid #40c4ff44;}
+.btn-green{background:#00e67620;color:var(--green);border:1px solid #00e67644;}
+.btn-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+
+/* ── 进度条 ── */
+.bar-bg{height:10px;background:#2a2d3e;border-radius:5px;overflow:hidden;margin-top:6px;}
+.bar-fg{height:100%;border-radius:5px;transition:width .6s;}
+
+/* ── 状态点 ── */
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;}
+.dot-green{background:var(--green);box-shadow:0 0 5px var(--green);}
+.dot-yellow{background:var(--yellow);}
+.dot-red{background:var(--red);box-shadow:0 0 5px var(--red);}
+
+/* ── 故障码标签 ── */
+.dtc-tag{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;
+         border-radius:6px;font-size:.78rem;font-weight:600;margin:3px;}
+.dtc-serious{background:#ff525218;border:1px solid #ff525244;color:var(--red);}
+.dtc-warn{background:#ffd74018;border:1px solid #ffd74044;color:var(--yellow);}
+.dtc-none{color:var(--green);font-size:.8rem;}
+
+/* ── 系统扫描行 ── */
+.sys-row{display:flex;justify-content:space-between;align-items:center;
+         padding:10px 0;border-bottom:1px solid var(--border);}
+.sys-row:last-child{border:none;}
+.sys-name{font-size:.82rem;}
+.sys-status{font-size:.75rem;font-weight:600;}
+.status-ok{color:var(--green);}
+.status-err{color:var(--red);}
+.status-warn{color:var(--yellow);}
+
+/* ── 单体电压 ── */
+.cell-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin-top:8px;}
+.cell-item{background:#22263a;border-radius:4px;padding:4px 2px;
+           text-align:center;font-size:.6rem;line-height:1.3;}
+.cell-item.high{background:#ff525220;color:var(--red);}
+.cell-item.low{background:#ffd74020;color:var(--yellow);}
+.cell-item.ok{color:#aaa;}
+.cell-num{color:var(--muted);font-size:.55rem;}
+
+/* ── 图表 ── */
+.chart-wrap{position:relative;height:160px;margin-top:8px;}
+.chart-wrap.tall{height:200px;}
+
+/* ── 切换按钮组 ── */
+.toggle-group{display:flex;gap:6px;margin-bottom:8px;}
+.toggle-btn{padding:5px 14px;border-radius:20px;border:1px solid var(--border);
+            background:transparent;color:var(--muted);font-size:.75rem;cursor:pointer;}
+.toggle-btn.active{background:var(--blue);color:#000;border-color:var(--blue);font-weight:700;}
+
+/* ── 预警横幅 ── */
+.alert-banner{display:none;background:#ff525218;border:1px solid #ff525244;
+              border-radius:8px;padding:8px 12px;margin-bottom:8px;
+              color:var(--red);font-size:.8rem;font-weight:600;}
+.alert-banner.show{display:flex;align-items:center;gap:6px;}
+
+/* ── 统计数字大卡 ── */
+.stat-big{text-align:center;padding:8px 0;}
+.stat-num{font-size:1.8rem;font-weight:700;color:var(--blue);}
+.stat-unit{font-size:.7rem;color:var(--muted);margin-top:2px;}
+
+/* ── 时间戳 ── */
+#ts{text-align:center;color:var(--muted);font-size:.65rem;padding:4px;}
+
+/* ── 扫描动画 ── */
+@keyframes scan{0%{opacity:.4}50%{opacity:1}100%{opacity:.4}}
+.scanning{animation:scan 1s infinite;}
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div class="topbar">
+  <span class="topbar-title">⚡ 新能源OBD</span>
+  <span id="conn-badge" class="badge badge-sim">连接中…</span>
+</div>
+
+<!-- ══════════════════ TAB 1: 首页概览 ══════════════════ -->
+<div id="page-home" class="page active">
+
+  <div class="grid2">
+    <div class="card gauge-wrap">
+      <div class="card-title">电池电量 SOC</div>
+      <svg class="gauge-svg" viewBox="0 0 110 60">
+        <path class="gauge-bg" d="M15,55 A45,45 0 0,1 95,55"/>
+        <path id="soc-arc" class="gauge-fg" d="M15,55 A45,45 0 0,1 95,55"
+              stroke="#00e676" stroke-dasharray="141.4" stroke-dashoffset="141.4"/>
+        <text id="soc-val" class="gauge-val" x="55" y="48" fill="#00e676">--</text>
+        <text class="gauge-unit" x="55" y="58">%</text>
+      </svg>
+      <span class="gauge-label">剩余电量</span>
+    </div>
+    <div class="card gauge-wrap">
+      <div class="card-title">电池健康 SOH</div>
+      <svg class="gauge-svg" viewBox="0 0 110 60">
+        <path class="gauge-bg" d="M15,55 A45,45 0 0,1 95,55"/>
+        <path id="soh-arc" class="gauge-fg" d="M15,55 A45,45 0 0,1 95,55"
+              stroke="#40c4ff" stroke-dasharray="141.4" stroke-dashoffset="141.4"/>
+        <text id="soh-val" class="gauge-val" x="55" y="48" fill="#40c4ff">--</text>
+        <text class="gauge-unit" x="55" y="58">%</text>
+      </svg>
+      <span class="gauge-label">电池寿命</span>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">🚗 行驶</div>
+      <div class="row"><span class="row-label">车速</span><span class="row-val"><span id="h-speed">--</span> km/h</span></div>
+      <div class="row"><span class="row-label">功率</span><span id="h-power-wrap" class="row-val"><span id="h-power">--</span> kW</span></div>
+      <div class="row"><span class="row-label">电机温度</span><span class="row-val"><span id="h-mtemp">--</span> ℃</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔋 电池</div>
+      <div class="row"><span class="row-label">总电压</span><span class="row-val"><span id="h-volt">--</span> V</span></div>
+      <div class="row"><span class="row-label">电流</span><span class="row-val"><span id="h-curr">--</span> A</span></div>
+      <div class="row"><span class="row-label">状态</span><span id="h-charge-st" class="row-val">--</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">续航估算</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="stat-big"><div id="h-range" class="stat-num" style="color:var(--green)">--</div><div class="stat-unit">公里</div></div>
+      <div class="stat-big"><div id="h-mileage" class="stat-num" style="font-size:1.3rem">--</div><div class="stat-unit">累计里程 km</div></div>
+      <div class="stat-big"><div id="h-fault" class="stat-num" style="font-size:1.3rem;color:var(--green)">0</div><div class="stat-unit">故障码</div></div>
+    </div>
+    <div class="bar-bg"><div id="h-soc-bar" class="bar-fg" style="width:0%;background:var(--green)"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">电量 & 车速趋势</div>
+    <div class="chart-wrap"><canvas id="home-chart"></canvas></div>
+  </div>
+  <div id="ts">最后更新：--</div>
+</div>
+
+<!-- ══════════════════ TAB 2: 故障扫描 ══════════════════ -->
+<div id="page-fault" class="page">
+
+  <div class="alert-banner" id="fault-banner">
+    ⚠ 检测到故障码，请尽快处理
+  </div>
+
+  <div class="card">
+    <div class="card-title">全车系统扫描</div>
+    <div id="scan-result">
+      <div style="color:var(--muted);font-size:.82rem;text-align:center;padding:20px;">
+        点击"开始扫描"检测全车故障
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="startScan()">🔍 开始扫描</button>
+      <button class="btn btn-red" onclick="clearAllDTC()">🗑 清除全部故障码</button>
+      <button class="btn btn-green" onclick="injectFault()">🧪 注入测试故障</button>
+    </div>
+    <div id="scan-msg" style="font-size:.75rem;margin-top:6px;color:var(--muted);"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">故障码详情 <span id="dtc-badge" class="badge badge-ok">0</span></div>
+    <div id="dtc-detail-list" style="min-height:40px;">
+      <span class="dtc-none">✓ 无故障码</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">故障码说明</div>
+    <div style="font-size:.75rem;color:var(--muted);line-height:1.8;">
+      <span style="color:var(--red)">■ 严重</span> — 影响行车安全，建议立即停车检修<br>
+      <span style="color:var(--yellow)">■ 警告</span> — 系统异常，建议尽快到店检测<br>
+      <span style="color:var(--green)">■ 正常</span> — 系统无故障
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ TAB 3: 电池包 ══════════════════ -->
+<div id="page-battery" class="page">
+
+  <div class="alert-banner" id="diff-banner">
+    ⚠ 单体压差过大，请检查电池包
+  </div>
+
+  <div class="card">
+    <div class="card-title">电池包概况</div>
+    <div class="grid2">
+      <div class="row" style="border:none;flex-direction:column;align-items:flex-start;gap:2px;">
+        <span class="row-label">最高单体</span>
+        <span id="cell-max" class="row-val" style="color:var(--red);">-- V</span>
+      </div>
+      <div class="row" style="border:none;flex-direction:column;align-items:flex-start;gap:2px;">
+        <span class="row-label">最低单体</span>
+        <span id="cell-min" class="row-val" style="color:var(--yellow);">-- V</span>
+      </div>
+      <div class="row" style="border:none;flex-direction:column;align-items:flex-start;gap:2px;">
+        <span class="row-label">平均电压</span>
+        <span id="cell-avg" class="row-val">-- V</span>
+      </div>
+      <div class="row" style="border:none;flex-direction:column;align-items:flex-start;gap:2px;">
+        <span class="row-label">压差</span>
+        <span id="cell-diff" class="row-val">-- mV</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">单体电压分布</div>
+    <div class="toggle-group">
+      <button class="toggle-btn active" onclick="setCellView('bar')">柱状图</button>
+      <button class="toggle-btn" onclick="setCellView('list')">列表</button>
+    </div>
+    <div id="cell-bar-wrap" class="chart-wrap tall">
+      <canvas id="cell-chart"></canvas>
+    </div>
+    <div id="cell-list-wrap" style="display:none;">
+      <div id="cell-grid" class="cell-grid"></div>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:8px;font-size:.7rem;">
+      <span><span class="dot dot-red"></span>偏高</span>
+      <span><span class="dot dot-yellow"></span>偏低</span>
+      <span><span style="color:var(--muted)">■</span> 正常</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">温度分布（℃）</div>
+    <div class="chart-wrap"><canvas id="temp-chart"></canvas></div>
+    <div class="grid2" style="margin-top:8px;">
+      <div class="row" style="border:none;flex-direction:column;align-items:flex-start;">
+        <span class="row-label">最高温度</span>
+        <span id="temp-max" class="row-val" style="color:var(--red)">-- ℃</span>
+      </div>
+      <div class="row" style="border:none;flex-direction:column;align-items:flex-start;">
+        <span class="row-label">最低温度</span>
+        <span id="temp-min" class="row-val" style="color:var(--blue)">-- ℃</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-bottom:8px;">
+    <button class="btn btn-blue" onclick="refreshCells()">🔄 刷新电池数据</button>
+  </div>
+</div>
+
+<!-- ══════════════════ TAB 4: 数据流 ══════════════════ -->
+<div id="page-stream" class="page">
+
+  <div class="card">
+    <div class="card-title">实时行驶数据</div>
+    <div class="row"><span class="row-label">🚗 车速</span><span class="row-val"><span id="s-speed">--</span> km/h</span></div>
+    <div class="row"><span class="row-label">⚡ 输出功率</span><span id="s-power-wrap" class="row-val"><span id="s-power">--</span> kW</span></div>
+    <div class="row"><span class="row-label">🌡 电机温度</span><span class="row-val"><span id="s-mtemp">--</span> ℃</span></div>
+    <div class="row"><span class="row-label">🌡 电池温度</span><span class="row-val"><span id="s-btemp">--</span> ℃</span></div>
+    <div class="row"><span class="row-label">🔌 总电压</span><span class="row-val"><span id="s-volt">--</span> V</span></div>
+    <div class="row"><span class="row-label">➡ 电流</span><span class="row-val"><span id="s-curr">--</span> A</span></div>
+    <div class="row"><span class="row-label">🔋 SOC</span><span class="row-val"><span id="s-soc">--</span> %</span></div>
+    <div class="row"><span class="row-label">充电状态</span><span id="s-charge-st" class="row-val">--</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">功率趋势</div>
+    <div class="chart-wrap tall"><canvas id="power-chart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">电压 / 电流趋势</div>
+    <div class="chart-wrap tall"><canvas id="vi-chart"></canvas></div>
+  </div>
+
+  <div style="text-align:center;margin-bottom:8px;">
+    <a class="btn btn-green" href="/api/export">📥 导出CSV数据</a>
+  </div>
+</div>
+
+<!-- ══════════════════ TAB 5: 电池统计 ══════════════════ -->
+<div id="page-stats" class="page">
+
+  <div class="grid2">
+    <div class="card" style="text-align:center;">
+      <div class="card-title" style="justify-content:center;">充电次数</div>
+      <div id="st-charge" class="stat-num">--</div>
+      <div class="stat-unit">次</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="card-title" style="justify-content:center;">满充次数</div>
+      <div id="st-full" class="stat-num" style="color:var(--green)">--</div>
+      <div class="stat-unit">次</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="card-title" style="justify-content:center;">累计里程</div>
+      <div id="st-mileage" class="stat-num" style="color:var(--yellow)">--</div>
+      <div class="stat-unit">公里</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="card-title" style="justify-content:center;">续航估算</div>
+      <div id="st-range" class="stat-num" style="color:var(--green)">--</div>
+      <div class="stat-unit">公里</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">电池健康状态</div>
+    <div class="row"><span class="row-label">当前SOH</span><span id="st-soh" class="row-val">-- %</span></div>
+    <div class="row"><span class="row-label">电池使用天数</span><span id="st-age" class="row-val">-- 天</span></div>
+    <div class="row"><span class="row-label">平均能耗</span><span id="st-energy" class="row-val">-- kWh/百km</span></div>
+    <div class="card-title" style="margin-top:10px;">SOH 健康度</div>
+    <div class="bar-bg" style="height:14px;">
+      <div id="st-soh-bar" class="bar-fg" style="width:0%;background:var(--blue)"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">健康建议</div>
+    <div id="health-tips" style="font-size:.78rem;line-height:1.9;color:var(--muted);">
+      加载中…
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-bottom:8px;">
+    <button class="btn btn-blue" onclick="loadStats()">🔄 刷新统计数据</button>
+  </div>
+</div>
+
+<!-- ── 底部Tab导航 ── -->
+<nav class="tabnav">
+  <div class="tabnav-item active" onclick="switchTab('home')" id="tab-home">
+    <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+    <span>概览</span>
+  </div>
+  <div class="tabnav-item" onclick="switchTab('fault')" id="tab-fault">
+    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    <span>故障</span>
+  </div>
+  <div class="tabnav-item" onclick="switchTab('battery')" id="tab-battery">
+    <svg viewBox="0 0 24 24"><path d="M15.67 4H14V2h-4v2H8.33C7.6 4 7 4.6 7 5.33v15.33C7 21.4 7.6 22 8.33 22h7.33c.74 0 1.34-.6 1.34-1.33V5.33C17 4.6 16.4 4 15.67 4z"/></svg>
+    <span>电池包</span>
+  </div>
+  <div class="tabnav-item" onclick="switchTab('stream')" id="tab-stream">
+    <svg viewBox="0 0 24 24"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
+    <span>数据流</span>
+  </div>
+  <div class="tabnav-item" onclick="switchTab('stats')" id="tab-stats">
+    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
+    <span>统计</span>
+  </div>
+</nav>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  Tab 切换
+// ══════════════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tabnav-item').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'battery') refreshCells();
+  if (name === 'stats')   loadStats();
+}
+
+// ══════════════════════════════════════════════════════
+//  Socket.IO 实时数据
+// ══════════════════════════════════════════════════════
+const socket = io();
+socket.on('connect',    () => setBadge('已连接','ok'));
+socket.on('disconnect', () => setBadge('已断开','err'));
+socket.on('obd_data',   d  => { updateHome(d); updateStream(d); pushHistory(d); });
+
+function setBadge(text, cls) {
+  const el = document.getElementById('conn-badge');
+  el.textContent = text;
+  el.className = 'badge badge-' + cls;
+}
+
+// ══════════════════════════════════════════════════════
+//  首页概览更新
+// ══════════════════════════════════════════════════════
+function updateHome(d) {
+  if (d.connected) setBadge(d.mode === '模拟' ? '模拟模式' : '✓ 已连接',
+                            d.mode === '模拟' ? 'sim' : 'ok');
+  setGauge('soc', d.soc, '#00e676');
+  setGauge('soh', d.soh, '#40c4ff');
+  setText('h-speed', d.speed);
+  const pw = d.power_kw;
+  document.getElementById('h-power').textContent = pw != null ? Math.abs(pw).toFixed(1) : '--';
+  document.getElementById('h-power-wrap').style.color = pw < 0 ? 'var(--green)' : 'var(--text)';
+  setText('h-mtemp', d.motor_temp);
+  setText('h-volt',  d.batt_voltage);
+  const curr = d.batt_current;
+  document.getElementById('h-curr').textContent = curr != null ? (curr > 0 ? '+' : '') + curr : '--';
+  document.getElementById('h-charge-st').innerHTML = chargeStatusHTML(d.charging);
+  setText('h-range',   d.range_estimate);
+  setText('h-mileage', d.total_mileage);
+  const fc = d.dtc_count || 0;
+  const fEl = document.getElementById('h-fault');
+  fEl.textContent = fc;
+  fEl.style.color = fc > 0 ? 'var(--red)' : 'var(--green)';
+  if (d.soc != null) {
+    const bar = document.getElementById('h-soc-bar');
+    bar.style.width = d.soc + '%';
+    bar.style.background = d.soc < 20 ? 'var(--red)' : d.soc < 50 ? 'var(--yellow)' : 'var(--green)';
+  }
+  document.getElementById('ts').textContent = '最后更新：' + (d.timestamp || '--');
+}
+
+function chargeStatusHTML(charging) {
+  if (charging === true)  return '<span class="dot dot-green"></span>充电中';
+  if (charging === false) return '<span class="dot dot-yellow"></span>放电中';
+  return '--';
+}
+
+function setGauge(name, val, color) {
+  const arc = document.getElementById(name + '-arc');
+  const txt = document.getElementById(name + '-val');
+  if (!arc || !txt) return;
+  if (val == null) { txt.textContent = '--'; return; }
+  const pct = Math.max(0, Math.min(100, parseFloat(val)));
+  arc.style.strokeDashoffset = 141.4 * (1 - pct / 100);
+  const c = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--yellow)' : color;
+  arc.style.stroke = c;
+  txt.textContent = Math.round(pct);
+  txt.style.fill = c;
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val != null ? val : '--';
+}
+
+// ══════════════════════════════════════════════════════
+//  首页趋势图
+// ══════════════════════════════════════════════════════
+const homeLabels=[], homeSoc=[], homeSpd=[];
+const homeChart = new Chart(document.getElementById('home-chart').getContext('2d'), {
+  type:'line',
+  data:{ labels:homeLabels, datasets:[
+    {label:'SOC %', data:homeSoc, borderColor:'#00e676', backgroundColor:'#00e67615',
+     yAxisID:'y1', tension:.3, pointRadius:0, fill:true, borderWidth:2},
+    {label:'速度 km/h', data:homeSpd, borderColor:'#40c4ff', backgroundColor:'transparent',
+     yAxisID:'y2', tension:.3, pointRadius:0, borderWidth:2}
+  ]},
+  options:{ responsive:true, maintainAspectRatio:false, animation:{duration:0},
+    plugins:{legend:{labels:{color:'#6c7293',font:{size:10}}}},
+    scales:{
+      x:{display:false},
+      y1:{position:'left',  min:0,max:100, ticks:{color:'#00e676',font:{size:10}}, grid:{color:'#2a2d3e'}},
+      y2:{position:'right', min:0,max:140, ticks:{color:'#40c4ff',font:{size:10}}, grid:{display:false}}
+    }
+  }
+});
+
+function pushHistory(d) {
+  if (d.soc == null && d.speed == null) return;
+  homeLabels.push(d.timestamp || '');
+  homeSoc.push(d.soc ?? null);
+  homeSpd.push(d.speed ?? null);
+  if (homeLabels.length > 60) { homeLabels.shift(); homeSoc.shift(); homeSpd.shift(); }
+  homeChart.update();
+}
+fetch('/api/history').then(r=>r.json()).then(h=>h.forEach(pushHistory));
+
+// ══════════════════════════════════════════════════════
+//  故障扫描
+// ══════════════════════════════════════════════════════
+function startScan() {
+  const result = document.getElementById('scan-result');
+  result.innerHTML = '<div class="scanning" style="color:var(--blue);font-size:.82rem;text-align:center;padding:20px;">🔍 正在扫描全车系统…</div>';
+  setTimeout(() => {
+    fetch('/api/scan').then(r=>r.json()).then(data => {
+      let html = '';
+      let totalFaults = 0;
+      for (const [sys, codes] of Object.entries(data)) {
+        const hasErr = codes.length > 0;
+        totalFaults += codes.length;
+        html += `<div class="sys-row">
+          <span class="sys-name">${sys}</span>
+          <span class="sys-status ${hasErr ? 'status-err' : 'status-ok'}">
+            ${hasErr ? '⚠ ' + codes.length + '个故障' : '✓ 正常'}
+          </span>
+        </div>`;
+      }
+      result.innerHTML = html || '<div style="color:var(--muted);font-size:.82rem;text-align:center;padding:16px;">暂无数据</div>';
+      updateDTCDetail(totalFaults);
+      const banner = document.getElementById('fault-banner');
+      banner.classList.toggle('show', totalFaults > 0);
+    });
+    fetch('/api/dtc').then(r=>r.json()).then(d => renderDTCList(d.codes));
+  }, 1500);
+}
+
+function renderDTCList(codes) {
+  const el = document.getElementById('dtc-detail-list');
+  const badge = document.getElementById('dtc-badge');
+  badge.textContent = codes.length;
+  badge.className = 'badge ' + (codes.length > 0 ? 'badge-err' : 'badge-ok');
+  if (!codes.length) { el.innerHTML = '<span class="dtc-none">✓ 无故障码</span>'; return; }
+  const descMap = {
+    'P0A80':'电池组严重退化','P0A7A':'电池冷却系统故障','P0B00':'高压互锁回路故障',
+    'P1E00':'电机控制器通信超时','P0AFA':'电池系统电压过低','P0A9B':'电池温度传感器故障',
+    'P0AA6':'高压隔离故障','P0AC0':'驱动电机A温度过高','P0562':'系统电压低','U0100':'与ECM/PCM通信丢失'
+  };
+  el.innerHTML = codes.map(c => {
+    const serious = c.startsWith('P0A8') || c.startsWith('P0B') || c.startsWith('P0AA');
+    return `<div class="dtc-tag ${serious ? 'dtc-serious' : 'dtc-warn'}">
+      ${serious ? '🔴' : '🟡'} <strong>${c}</strong> — ${descMap[c] || '未知故障'}
+    </div>`;
+  }).join('');
+}
+
+function updateDTCDetail(count) {
+  const badge = document.getElementById('dtc-badge');
+  badge.textContent = count;
+  badge.className = 'badge ' + (count > 0 ? 'badge-err' : 'badge-ok');
+}
+
+function clearAllDTC() {
+  if (!confirm('确认清除全部故障码？')) return;
+  fetch('/api/dtc/clear', {method:'POST'}).then(r=>r.json()).then(j => {
+    document.getElementById('scan-msg').textContent = j.message;
+    setTimeout(() => document.getElementById('scan-msg').textContent = '', 3000);
+    renderDTCList([]);
+    document.getElementById('fault-banner').classList.remove('show');
+    document.getElementById('scan-result').innerHTML =
+      '<div style="color:var(--green);font-size:.82rem;text-align:center;padding:16px;">✓ 故障码已清除，请重新扫描</div>';
+  });
+}
+
+function injectFault() {
+  const codes = ['P0A80','P0A7A','P0B00','P1E00','P0AFA'];
+  const code = codes[Math.floor(Math.random()*codes.length)];
+  fetch('/api/inject_fault',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({code})}).then(r=>r.json()).then(j=>{
+    document.getElementById('scan-msg').textContent = j.success ? '已注入: '+j.injected : j.message;
+    setTimeout(()=>document.getElementById('scan-msg').textContent='', 3000);
+  });
+}
+
+// ══════════════════════════════════════════════════════
+//  电池包检测
+// ══════════════════════════════════════════════════════
+let cellChartInst = null, tempChartInst = null, cellView = 'bar';
+
+function setCellView(v) {
+  cellView = v;
+  document.querySelectorAll('.toggle-btn').forEach((b,i) => {
+    b.classList.toggle('active', (i===0&&v==='bar')||(i===1&&v==='list'));
+  });
+  document.getElementById('cell-bar-wrap').style.display  = v==='bar'  ? 'block' : 'none';
+  document.getElementById('cell-list-wrap').style.display = v==='list' ? 'block' : 'none';
+}
+
+function refreshCells() {
+  fetch('/api/cells').then(r=>r.json()).then(d => {
+    setText('cell-max',  d.max_voltage != null ? d.max_voltage.toFixed(3)+' V' : '--');
+    setText('cell-min',  d.min_voltage != null ? d.min_voltage.toFixed(3)+' V' : '--');
+    setText('cell-avg',  d.avg_voltage != null ? d.avg_voltage.toFixed(3)+' V' : '--');
+    const diffEl = document.getElementById('cell-diff');
+    diffEl.textContent = d.diff_mv != null ? d.diff_mv+' mV' : '--';
+    diffEl.style.color = d.diff_alarm ? 'var(--red)' : d.diff_warn ? 'var(--yellow)' : 'var(--green)';
+    document.getElementById('diff-banner').classList.toggle('show', !!d.diff_warn);
+    if (d.cells && d.cells.length) {
+      renderCellChart(d);
+      renderCellList(d);
+    }
+    if (d.temps && d.temps.length) {
+      setText('temp-max', d.max_temp + ' ℃');
+      setText('temp-min', d.min_temp + ' ℃');
+      renderTempChart(d.temps);
+    }
+  });
+}
+
+function renderCellChart(d) {
+  const cells = d.cells;
+  const avg   = d.avg_voltage;
+  const colors = cells.map(v =>
+    v > avg + 0.03 ? '#ff5252aa' : v < avg - 0.03 ? '#ffd740aa' : '#40c4ff88');
+  const ctx = document.getElementById('cell-chart').getContext('2d');
+  if (cellChartInst) cellChartInst.destroy();
+  cellChartInst = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: cells.map((_,i)=> i+1),
+      datasets:[{
+        label:'单体电压(V)', data:cells, backgroundColor:colors,
+        borderWidth:0, borderRadius:2
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:{duration:300},
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:ctx=>`${ctx.parsed.y.toFixed(3)} V`}}},
+      scales:{
+        x:{ticks:{color:'#6c7293',font:{size:9},maxTicksLimit:24}, grid:{display:false}},
+        y:{min: Math.min(...cells)-0.05, max: Math.max(...cells)+0.05,
+           ticks:{color:'#6c7293',font:{size:9},callback:v=>v.toFixed(2)}, grid:{color:'#2a2d3e'}}
+      }
+    }
+  });
+}
+
+function renderCellList(d) {
+  const cells = d.cells, avg = d.avg_voltage;
+  document.getElementById('cell-grid').innerHTML = cells.map((v,i) => {
+    const cls = v > avg+0.03 ? 'high' : v < avg-0.03 ? 'low' : 'ok';
+    return `<div class="cell-item ${cls}"><div class="cell-num">#${i+1}</div>${v.toFixed(3)}</div>`;
+  }).join('');
+}
+
+function renderTempChart(temps) {
+  const ctx = document.getElementById('temp-chart').getContext('2d');
+  if (tempChartInst) tempChartInst.destroy();
+  tempChartInst = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: temps.map((_,i)=>'T'+(i+1)),
+      datasets:[{label:'温度(℃)', data:temps,
+        backgroundColor: temps.map(t => t>45?'#ff5252aa':t>40?'#ffd740aa':'#00e67688'),
+        borderWidth:0, borderRadius:3}]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:{duration:300},
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:'#6c7293',font:{size:10}}, grid:{display:false}},
+        y:{ticks:{color:'#6c7293',font:{size:10}}, grid:{color:'#2a2d3e'}}
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════
+//  数据流图表
+// ══════════════════════════════════════════════════════
+const streamLabels=[], streamPow=[], streamVolt=[], streamCurr=[];
+
+const powerChart = new Chart(document.getElementById('power-chart').getContext('2d'),{
+  type:'line',
+  data:{labels:streamLabels, datasets:[
+    {label:'功率 kW', data:streamPow, borderColor:'#ce93d8', backgroundColor:'#ce93d820',
+     tension:.3, pointRadius:0, fill:true, borderWidth:2}
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,animation:{duration:0},
+    plugins:{legend:{labels:{color:'#6c7293',font:{size:10}}}},
+    scales:{
+      x:{display:false},
+      y:{ticks:{color:'#ce93d8',font:{size:10}},grid:{color:'#2a2d3e'}}
+    }
+  }
+});
+
+const viChart = new Chart(document.getElementById('vi-chart').getContext('2d'),{
+  type:'line',
+  data:{labels:streamLabels, datasets:[
+    {label:'电压 V', data:streamVolt, borderColor:'#ffd740', backgroundColor:'transparent',
+     yAxisID:'yv', tension:.3, pointRadius:0, borderWidth:2},
+    {label:'电流 A', data:streamCurr, borderColor:'#ff5252', backgroundColor:'transparent',
+     yAxisID:'ya', tension:.3, pointRadius:0, borderWidth:2}
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,animation:{duration:0},
+    plugins:{legend:{labels:{color:'#6c7293',font:{size:10}}}},
+    scales:{
+      x:{display:false},
+      yv:{position:'left',  ticks:{color:'#ffd740',font:{size:10}},grid:{color:'#2a2d3e'}},
+      ya:{position:'right', ticks:{color:'#ff5252',font:{size:10}},grid:{display:false}}
+    }
+  }
+});
+
+function updateStream(d) {
+  setText('s-speed', d.speed);
+  const pw = d.power_kw;
+  document.getElementById('s-power').textContent = pw!=null ? Math.abs(pw).toFixed(1) : '--';
+  document.getElementById('s-power-wrap').style.color = pw<0 ? 'var(--green)' : 'var(--text)';
+  setText('s-mtemp', d.motor_temp);
+  setText('s-btemp', d.batt_temp);
+  setText('s-volt',  d.batt_voltage);
+  const curr = d.batt_current;
+  document.getElementById('s-curr').textContent = curr!=null?(curr>0?'+':'')+curr:'--';
+  setText('s-soc', d.soc);
+  document.getElementById('s-charge-st').innerHTML = chargeStatusHTML(d.charging);
+
+  streamLabels.push(d.timestamp||'');
+  streamPow.push(d.power_kw??null);
+  streamVolt.push(d.batt_voltage??null);
+  streamCurr.push(d.batt_current??null);
+  if (streamLabels.length>60){
+    streamLabels.shift();streamPow.shift();streamVolt.shift();streamCurr.shift();
+  }
+  powerChart.update();
+  viChart.update();
+}
+
+// ══════════════════════════════════════════════════════
+//  电池统计
+// ══════════════════════════════════════════════════════
+function loadStats() {
+  fetch('/api/stats').then(r=>r.json()).then(d => {
+    setText('st-charge',  d.charge_count);
+    setText('st-full',    d.full_charge_count);
+    setText('st-mileage', d.total_mileage);
+    setText('st-range',   d.range_estimate);
+    const soh = d.soh;
+    document.getElementById('st-soh').textContent = soh!=null ? soh+'%' : '--';
+    document.getElementById('st-soh-bar').style.width = (soh||0)+'%';
+    setText('st-age',    d.batt_age_days ? d.batt_age_days+' 天' : null);
+    setText('st-energy', d.avg_energy ? d.avg_energy+' kWh/百km' : null);
+
+    // 健康建议
+    let tips = '';
+    if (soh >= 90)      tips = '🟢 电池健康状态优秀，继续保持良好的充电习惯。';
+    else if (soh >= 80) tips = '🟡 电池健康度良好，建议避免长期亏电停放，尽量使用慢充。';
+    else if (soh >= 70) tips = '🟠 电池健康度一般，建议到4S店做电池深度检测。';
+    else                tips = '🔴 电池健康度较低，建议尽快联系售后评估电池包状态。';
+    tips += '<br><br>💡 充电建议：日常充到80%，长途出发前再充满。<br>❄️ 冬季建议预热后再快充，延长电池寿命。';
+    document.getElementById('health-tips').innerHTML = tips;
+  });
+}
+</script>
+</body>
+</html>
