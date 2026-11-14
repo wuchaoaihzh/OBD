@@ -326,6 +326,19 @@ class RealOBD:
 
     def read_all(self) -> dict:
         with self._lock:
+            # 检查连接状态
+            if not self._conn or not self._conn.is_connected():
+                return {
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "connected": False,
+                    "mode": getattr(self, '_mode_label', '未连接'),
+                    "soc": None, "soh": None, "speed": None,
+                    "batt_voltage": None, "batt_current": None,
+                    "batt_temp": None, "motor_temp": None,
+                    "power_kw": None, "charging": None,
+                    "dtc_count": 0, "dtc_codes": [],
+                }
+
             # 标准OBD-II
             speed   = self._query("SPEED")
             dtc_resp = self._conn.query(obd.commands.GET_DTC) if self._conn else None
@@ -846,10 +859,11 @@ def create_obd_client(simulate=True, port="192.168.0.10:35000", car_model="han_e
         print("[OBD] 连接成功！")
         client._mode_label = f"已连接·{CAR_MODELS.get(car_model, car_model)}"
         return client
-    print("[OBD] 连接失败，回退到模拟模式")
-    fallback = SimulatedOBD()
-    fallback._mode_label = "模拟(无硬件)"
-    return fallback
+
+    # 连接失败，返回断开状态的客户端（不回退模拟）
+    print("[OBD] 连接失败")
+    client._mode_label = "连接失败"
+    return client
 
 
 def get_eq1_scanner(port="192.168.0.10:35000"):
