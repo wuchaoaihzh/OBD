@@ -73,7 +73,7 @@ class SimulatedOBD:
             return {
                 "timestamp":        datetime.now().strftime("%H:%M:%S"),
                 "connected":        True,
-                "mode":             "模拟",
+                "mode":             getattr(self, '_mode_label', '模拟模式'),
                 "soc":              round(self._soc, 1),
                 "soh":              round(self._soh, 1),
                 "batt_voltage":     batt_volt,
@@ -836,15 +836,20 @@ CAR_MODELS = {
 def create_obd_client(simulate=True, port="192.168.0.10:35000", car_model="han_ev"):
     if simulate:
         print(f"[OBD] 使用模拟模式（车型: {car_model}）")
-        return SimulatedOBD()
+        client = SimulatedOBD()
+        client._mode_label = "模拟模式"
+        return client
 
     print(f"[OBD] 尝试连接 {port}，车型: {car_model} ...")
     client = RealOBD(port=port, car_model=car_model)
     if client.connect():
         print("[OBD] 连接成功！")
+        client._mode_label = f"已连接·{CAR_MODELS.get(car_model, car_model)}"
         return client
     print("[OBD] 连接失败，回退到模拟模式")
-    return SimulatedOBD()
+    fallback = SimulatedOBD()
+    fallback._mode_label = "模拟(无硬件)"
+    return fallback
 
 
 def get_eq1_scanner(port="192.168.0.10:35000"):

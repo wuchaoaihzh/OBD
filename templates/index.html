@@ -424,23 +424,17 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <!-- ══════════════════ TAB 6: 设置 ══════════════════ -->
 <div id="page-settings" class="page">
 
-  <!-- 连接模式 -->
+  <!-- 连接配置 -->
   <div class="card">
-    <div class="card-title">🔌 连接模式</div>
-    <div style="display:flex;gap:8px;margin-bottom:12px;">
-      <button id="btn-simulate" class="toggle-btn active" onclick="setMode(true)">🧪 模拟模式</button>
-      <button id="btn-real"     class="toggle-btn"        onclick="setMode(false)">📡 真实ELM327</button>
+    <div class="card-title">🔌 ELM327连接配置</div>
+    <div class="row">
+      <span class="row-label">ELM327 地址</span>
+      <input id="obd-port" value="192.168.0.10:35000"
+             style="background:#22263a;border:1px solid #2a2d3e;color:#e8eaf6;
+                    border-radius:6px;padding:5px 8px;font-size:.82rem;width:160px;text-align:right;">
     </div>
-    <div id="real-settings" style="display:none;">
-      <div class="row">
-        <span class="row-label">ELM327 地址</span>
-        <input id="obd-port" value="192.168.0.10:35000"
-               style="background:#22263a;border:1px solid #2a2d3e;color:#e8eaf6;
-                      border-radius:6px;padding:5px 8px;font-size:.82rem;width:160px;text-align:right;">
-      </div>
-    </div>
-    <div id="sim-tip" style="font-size:.75rem;color:var(--muted);margin-top:6px;">
-      模拟模式使用虚拟数据，无需硬件即可查看界面效果
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px;">
+      确保手机已连接ELM327的WiFi热点，车辆已点火
     </div>
   </div>
 
@@ -566,8 +560,13 @@ function setBadge(text, cls) {
 //  首页概览更新
 // ══════════════════════════════════════════════════════
 function updateHome(d) {
-  if (d.connected) setBadge(d.mode === '模拟' ? '模拟模式' : '✓ 已连接',
-                            d.mode === '模拟' ? 'sim' : 'ok');
+  if (d.connected) {
+    const m = d.mode || '';
+    if (m.includes('无硬件'))    setBadge('⚠ ' + m, 'err');
+    else                         setBadge('✓ ' + m, 'ok');
+  } else {
+    setBadge('未连接', 'err');
+  }
   setGauge('soc', d.soc, '#00e676');
   setGauge('soh', d.soh, '#40c4ff');
   setText('h-speed', d.speed);
@@ -909,38 +908,21 @@ function loadStats() {
 // ══════════════════════════════════════════════════════
 //  设置页面
 // ══════════════════════════════════════════════════════
-let _currentMode = true;
 let _currentCar  = 'han_ev';
 let _scanTimer   = null;
 
 // 页面加载时读取当前配置
 fetch('/api/config').then(r=>r.json()).then(cfg => {
-  _currentMode = cfg.simulate;
   _currentCar  = cfg.car_model || 'han_ev';
   document.getElementById('obd-port').value = cfg.obd_port || '192.168.0.10:35000';
-  applyModeUI(_currentMode);
   applyCarUI(_currentCar);
 });
 
 // SocketIO收到配置变更时同步UI
 socket.on('config_changed', cfg => {
-  _currentMode = cfg.simulate;
   _currentCar  = cfg.car_model;
-  applyModeUI(_currentMode);
   applyCarUI(_currentCar);
 });
-
-function setMode(simulate) {
-  _currentMode = simulate;
-  applyModeUI(simulate);
-}
-
-function applyModeUI(simulate) {
-  document.getElementById('btn-simulate').classList.toggle('active',  simulate);
-  document.getElementById('btn-real').classList.toggle('active',     !simulate);
-  document.getElementById('real-settings').style.display = simulate ? 'none' : 'block';
-  document.getElementById('sim-tip').style.display       = simulate ? 'block': 'none';
-}
 
 function selectCar(model) {
   _currentCar = model;
@@ -954,20 +936,19 @@ function applyCarUI(model) {
     if (check) check.textContent = m === model ? '✓' : '○';
     if (check) check.style.color = m === model ? 'var(--green)' : 'var(--muted)';
   });
-  // EQ1扫描卡片只在选EQ1且非模拟时显示
+  // EQ1扫描卡片只在选EQ1时显示
   const eq1Card = document.getElementById('eq1-scan-card');
-  if (eq1Card) eq1Card.style.display = (model === 'eq1' && !_currentMode) ? 'block' : 'none';
+  if (eq1Card) eq1Card.style.display = (model === 'eq1') ? 'block' : 'none';
 }
 
 function saveSettings() {
   const cfg = {
-    simulate:  _currentMode,
     obd_port:  document.getElementById('obd-port').value.trim(),
     car_model: _currentCar,
   };
   const msg = document.getElementById('save-msg');
   msg.style.color = 'var(--muted)';
-  msg.textContent = '保存中…';
+  msg.textContent = '保存并连接中…';
   fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(cfg)

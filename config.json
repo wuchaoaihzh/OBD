@@ -1,5 +1,4 @@
 {
-  "simulate": true,
   "obd_port": "192.168.0.10:35000",
   "car_model": "han_ev",
   "poll_interval": 1.0

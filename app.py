@@ -15,7 +15,7 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
 # ── 配置读写 ───────────────────────────────────────────────────────────────────
 def load_config() -> dict:
-    defaults = {"simulate": True, "obd_port": "192.168.0.10:35000",
+    defaults = {"obd_port": "192.168.0.10:35000",
                 "car_model": "han_ev", "poll_interval": 1.0}
     try:
         with open(CONFIG_FILE, "r") as f:
@@ -35,7 +35,7 @@ app.config["SECRET_KEY"] = "obd-secret-2024"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 cfg = load_config()
-obd_client = create_obd_client(simulate=cfg["simulate"],
+obd_client = create_obd_client(simulate=False,
                                 port=cfg["obd_port"],
                                 car_model=cfg["car_model"])
 
@@ -213,22 +213,27 @@ def api_config_save():
     cfg = load_config()
     cfg.update(new_cfg)
     save_config(cfg)
-    # 重建OBD客户端
-    try:
-        if hasattr(obd_client, "disconnect"):
-            obd_client.disconnect()
-    except Exception:
-        pass
-    obd_client = create_obd_client(simulate=cfg["simulate"],
-                                    port=cfg["obd_port"],
-                                    car_model=cfg["car_model"])
-    # 清空历史
-    with history_lock:
-        history.clear()
-    socketio.emit("config_changed", cfg)
+
+    # 异步重建OBD客户端，避免阻塞HTTP响应
+    def rebuild_client():
+        global obd_client
+        try:
+            if hasattr(obd_client, "disconnect"):
+                obd_client.disconnect()
+        except Exception:
+            pass
+        obd_client = create_obd_client(simulate=False,
+                                        port=cfg["obd_port"],
+                                        car_model=cfg["car_model"])
+        with history_lock:
+            history.clear()
+        socketio.emit("config_changed", cfg)
+        socketio.emit("obd_data", obd_client.read_all())
+
+    threading.Thread(target=rebuild_client, daemon=True).start()
+
     return jsonify({"success": True, "config": cfg,
-                    "message": f"已切换到{'模拟' if cfg['simulate'] else '真实'}模式"
-                               f"，车型：{cfg['car_model']}"})
+                    "message": f"配置已保存，正在连接车型：{cfg['car_model']}"})
 
 # ── SocketIO ───────────────────────────────────────────────────────────────────
 @socketio.on("connect")
@@ -248,7 +253,6 @@ if __name__ == "__main__":
     cfg = load_config()
     print("=" * 50)
     print("  新能源OBD检测系统已启动")
-    print(f"  模式: {'模拟' if cfg['simulate'] else '真实ELM327'}")
     print(f"  车型: {cfg['car_model']}")
     print("  浏览器访问: http://0.0.0.0:5000")
     print("=" * 50)
